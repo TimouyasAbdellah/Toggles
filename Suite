@@ -1,0 +1,216 @@
+D'accord, continuons avec la suite pour compléter l'implémentation.
+
+### Étape 2.3 (suite) : Frontend - Ajouter des stratégies lors de la création des toggles
+
+Dans le fichier `toggle-create.component.ts`, nous allons ajouter la gestion des stratégies comme indiqué précédemment, puis envoyer ces stratégies au backend lors de la création du toggle.
+
+##### `toggle-create.component.ts` (suite)
+
+```typescript
+import { Component } from '@angular/core';
+import { ToggleService } from '../../services/toggle.service';
+import { Toggle } from '../../models/toggle';
+import { Router } from '@angular/router';
+
+@Component({
+  selector: 'app-toggle-create',
+  templateUrl: './toggle-create.component.html',
+  styleUrls: ['./toggle-create.component.css']
+})
+export class ToggleCreateComponent {
+  toggle: Toggle = {
+    id: 0,
+    name: '',
+    enabled: false
+  };
+
+  userGroupStrategy: string = '';  // Pour capturer la stratégie des groupes d'utilisateurs
+  environmentStrategy: string = '';  // Pour capturer la stratégie d'environnement
+
+  constructor(private toggleService: ToggleService, private router: Router) {}
+
+  createToggle(): void {
+    const strategies = [];
+
+    if (this.userGroupStrategy) {
+      strategies.push({
+        name: 'UserGroupStrategy',
+        parameters: JSON.stringify({ allowedGroups: this.userGroupStrategy.split(',') })
+      });
+    }
+
+    if (this.environmentStrategy) {
+      strategies.push({
+        name: 'EnvironmentStrategy',
+        parameters: JSON.stringify({ allowedEnvironments: this.environmentStrategy.split(',') })
+      });
+    }
+
+    // Associer les stratégies au toggle avant de l'envoyer au backend
+    this.toggle['strategies'] = strategies;
+
+    // Créer le toggle via l'API backend
+    this.toggleService.createToggle(this.toggle).subscribe(() => {
+      this.router.navigate(['/toggles']);
+    });
+  }
+}
+```
+
+### Étape 3 : Backend - Gérer les stratégies dans Spring Boot
+
+Maintenant, nous devons ajuster le backend pour traiter les stratégies lorsqu'un toggle est créé ou mis à jour.
+
+#### 3.1. Contrôleur Spring Boot - Mise à jour de `ToggleController`
+
+Dans le contrôleur, nous allons simplement nous assurer que les stratégies associées au toggle sont correctement sauvegardées.
+
+##### `ToggleController.java`
+
+```java
+package com.example.toggleapp.controller;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+import com.example.toggleapp.model.Toggle;
+import com.example.toggleapp.service.ToggleService;
+
+import java.util.List;
+import java.util.Optional;
+
+@RestController
+@RequestMapping("/api/toggles")
+@CrossOrigin(origins = "http://localhost:4200")  // Permettre les requêtes depuis Angular
+public class ToggleController {
+
+    @Autowired
+    private ToggleService toggleService;
+
+    @GetMapping
+    public List<Toggle> getAllToggles() {
+        return toggleService.getAllToggles();
+    }
+
+    @GetMapping("/{id}")
+    public Optional<Toggle> getToggleById(@PathVariable Long id) {
+        return toggleService.getToggleById(id);
+    }
+
+    @PostMapping
+    public Toggle createToggle(@RequestBody Toggle toggle) {
+        return toggleService.saveToggle(toggle);
+    }
+
+    @PutMapping("/{id}")
+    public Toggle updateToggle(@PathVariable Long id, @RequestBody Toggle toggle) {
+        toggle.setId(id);
+        return toggleService.saveToggle(toggle);
+    }
+
+    @DeleteMapping("/{id}")
+    public void deleteToggle(@PathVariable Long id) {
+        toggleService.deleteToggle(id);
+    }
+}
+```
+
+#### 3.2. Valider les stratégies lors de la récupération d'un toggle
+
+Nous avons déjà ajouté une méthode dans le `ToggleService` qui vérifie les stratégies associées à un toggle avant de décider s'il est activé pour un utilisateur donné ou un environnement spécifique.
+
+Voici un rappel de la méthode qui valide les stratégies de gestion des toggles :
+
+##### `ToggleService.java`
+
+```java
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import com.example.toggleapp.model.Toggle;
+import com.example.toggleapp.model.Strategy;
+import com.example.toggleapp.repository.ToggleRepository;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+@Service
+public class ToggleService {
+
+    @Autowired
+    private ToggleRepository toggleRepository;
+
+    public List<Toggle> getAllToggles() {
+        return toggleRepository.findAll();
+    }
+
+    public Optional<Toggle> getToggleById(Long id) {
+        return toggleRepository.findById(id);
+    }
+
+    public Toggle saveToggle(Toggle toggle) {
+        return toggleRepository.save(toggle);
+    }
+
+    public void deleteToggle(Long id) {
+        toggleRepository.deleteById(id);
+    }
+
+    // Méthode pour valider si un toggle est activé pour un utilisateur et un environnement spécifiques
+    public boolean isToggleEnabledForUser(Long toggleId, String userGroup, String environment) {
+        Toggle toggle = toggleRepository.findById(toggleId).orElseThrow();
+        for (Strategy strategy : toggle.getStrategies()) {
+            if ("UserGroupStrategy".equals(strategy.getName())) {
+                try {
+                    ObjectMapper mapper = new ObjectMapper();
+                    Map<String, Object> params = mapper.readValue(strategy.getParameters(), Map.class);
+                    List<String> allowedGroups = (List<String>) params.get("allowedGroups");
+                    if (!allowedGroups.contains(userGroup)) {
+                        return false;
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+
+            if ("EnvironmentStrategy".equals(strategy.getName())) {
+                try {
+                    ObjectMapper mapper = new ObjectMapper();
+                    Map<String, Object> params = mapper.readValue(strategy.getParameters(), Map.class);
+                    List<String> allowedEnvironments = (List<String>) params.get("allowedEnvironments");
+                    if (!allowedEnvironments.contains(environment)) {
+                        return false;
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        return toggle.isEnabled();
+    }
+}
+```
+
+### Étape 4 : Intégration et test
+
+#### 4.1. Tester la création d'un toggle avec des stratégies
+
+1. **Frontend** : Ouvre l'écran de création de toggle.
+2. **Formulaire** : Remplis le nom du toggle, son état (`enabled` ou non), et les stratégies (groupes d'utilisateurs et environnements).
+3. **Enregistrement** : Soumets le formulaire et vérifie que le toggle est bien créé avec les stratégies associées.
+
+#### 4.2. Tester la validation des stratégies
+
+1. **Backend** : Appelle l'API pour vérifier si un toggle est activé pour un groupe d'utilisateurs et un environnement spécifiques via la méthode `isToggleEnabledForUser`.
+2. **Vérifications** : Assure-toi que les stratégies sont bien appliquées, c'est-à-dire que si le toggle est limité à certains groupes ou environnements, il ne sera pas activé pour d'autres.
+
+### Conclusion
+
+Avec ce code, tu as maintenant une application qui permet :
+- **Création des toggles** : Possibilité de créer des toggles avec un écran dédié.
+- **Stratégies** : Gestion des stratégies (groupes d’utilisateurs, environnements) comme FF4J, avec des règles de validation sur le backend.
+- **Validation** : Les toggles sont activés/désactivés en fonction des stratégies associées.
+
+N'hésite pas à ajouter plus de stratégies selon tes besoins (par exemple, des stratégies temporelles ou basées sur des versions d'application).
