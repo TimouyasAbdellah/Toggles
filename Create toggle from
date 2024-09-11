@@ -1,0 +1,297 @@
+Bien sûr, je vais t'expliquer comment tu peux ajouter un écran pour créer des toggles ainsi que comment intégrer une gestion de stratégies similaire à **FF4J** dans ton application Angular/Spring Boot. Cela te permettra d'ajouter des fonctionnalités avancées comme les stratégies de contrôle des toggles, par exemple en fonction d'un environnement ou d'un utilisateur.
+
+### Étape 1 : Ajouter un écran pour créer des toggles
+
+Nous allons commencer par ajouter un formulaire pour créer de nouveaux toggles via l'interface Angular.
+
+#### 1.1. Frontend - Créer un composant pour ajouter des toggles
+
+Crée un nouveau composant `toggle-create` pour ajouter des toggles :
+
+```bash
+ng generate component components/toggle-create
+```
+
+##### `toggle-create.component.ts`
+Voici le fichier TypeScript pour gérer la logique du formulaire de création de toggles :
+
+```typescript
+import { Component } from '@angular/core';
+import { ToggleService } from '../../services/toggle.service';
+import { Toggle } from '../../models/toggle';
+import { Router } from '@angular/router';
+
+@Component({
+  selector: 'app-toggle-create',
+  templateUrl: './toggle-create.component.html',
+  styleUrls: ['./toggle-create.component.css']
+})
+export class ToggleCreateComponent {
+
+  toggle: Toggle = {
+    id: 0,
+    name: '',
+    enabled: false
+  };
+
+  constructor(private toggleService: ToggleService, private router: Router) { }
+
+  createToggle(): void {
+    this.toggleService.createToggle(this.toggle).subscribe(() => {
+      this.router.navigate(['/toggles']);
+    });
+  }
+}
+```
+
+##### `toggle-create.component.html`
+Le formulaire HTML pour ajouter un nouveau toggle ressemblerait à ceci :
+
+```html
+<div>
+  <h1>Create New Toggle</h1>
+  <form (submit)="createToggle()">
+    <div>
+      <label for="name">Toggle Name:</label>
+      <input id="name" [(ngModel)]="toggle.name" name="name" required />
+    </div>
+    <div>
+      <label for="enabled">Enabled:</label>
+      <input type="checkbox" id="enabled" [(ngModel)]="toggle.enabled" name="enabled" />
+    </div>
+    <button type="submit">Create Toggle</button>
+  </form>
+</div>
+```
+
+#### 1.2. Ajouter une route pour le formulaire de création de toggle
+
+Ouvre ton fichier de routes `app-routing.module.ts` et ajoute une route pour accéder à l'écran de création de toggles :
+
+```typescript
+import { NgModule } from '@angular/core';
+import { RouterModule, Routes } from '@angular/router';
+import { ToggleListComponent } from './components/toggle-list/toggle-list.component';
+import { ToggleCreateComponent } from './components/toggle-create/toggle-create.component';
+
+const routes: Routes = [
+  { path: 'toggles', component: ToggleListComponent },
+  { path: 'toggles/create', component: ToggleCreateComponent },
+  { path: '', redirectTo: '/toggles', pathMatch: 'full' },
+];
+
+@NgModule({
+  imports: [RouterModule.forRoot(routes)],
+  exports: [RouterModule]
+})
+export class AppRoutingModule { }
+```
+
+#### 1.3. Lier la navigation depuis la liste des toggles
+
+Dans le composant de liste des toggles (`toggle-list.component.html`), ajoute un bouton pour naviguer vers l'écran de création de toggle :
+
+```html
+<div>
+  <h1>List of Toggles</h1>
+  <button routerLink="/toggles/create">Create New Toggle</button>
+  <ul>
+    <li *ngFor="let toggle of toggles">
+      <span>{{ toggle.name }} ({{ toggle.enabled ? 'Enabled' : 'Disabled' }})</span>
+      <button (click)="toggleStatus(toggle)">Toggle</button>
+      <button (click)="deleteToggle(toggle.id)">Delete</button>
+    </li>
+  </ul>
+</div>
+```
+
+### Étape 2 : Ajouter des stratégies de gestion des toggles comme FF4J
+
+Dans FF4J, les stratégies permettent d'appliquer des règles avancées pour activer/désactiver un toggle, comme une activation par groupe d'utilisateurs ou par environnement. Nous allons simuler un système similaire en introduisant des **stratégies personnalisées**.
+
+#### 2.1. Backend - Ajouter une entité `Strategy`
+
+Crée une entité `Strategy` qui définira les différentes stratégies possibles pour un toggle.
+
+##### `Strategy.java`
+```java
+package com.example.toggleapp.model;
+
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+
+@Entity
+public class Strategy {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;  // Exemple: "UserGroupStrategy", "EnvironmentStrategy"
+    private String parameters;  // JSON ou chaîne encodée pour les paramètres spécifiques à la stratégie
+
+    // Getters et Setters
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getParameters() {
+        return parameters;
+    }
+
+    public void setParameters(String parameters) {
+        this.parameters = parameters;
+    }
+}
+```
+
+##### Relier les stratégies aux toggles
+
+Modifie l'entité `Toggle` pour ajouter une relation vers les stratégies.
+
+##### `Toggle.java`
+```java
+import javax.persistence.*;
+import java.util.List;
+
+@Entity
+public class Toggle {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String name;
+    private boolean enabled;
+
+    @OneToMany(cascade = CascadeType.ALL)
+    @JoinColumn(name = "toggle_id")
+    private List<Strategy> strategies;  // Liste des stratégies associées
+
+    // Getters et Setters
+    // ...
+}
+```
+
+#### 2.2. Backend - Ajouter une logique de validation des stratégies
+
+Dans le service `ToggleService`, ajoute une méthode pour valider un toggle en fonction des stratégies :
+
+```java
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+@Service
+public class ToggleService {
+
+    @Autowired
+    private ToggleRepository toggleRepository;
+
+    public List<Toggle> getAllToggles() {
+        return toggleRepository.findAll();
+    }
+
+    public Optional<Toggle> getToggleById(Long id) {
+        return toggleRepository.findById(id);
+    }
+
+    public Toggle saveToggle(Toggle toggle) {
+        return toggleRepository.save(toggle);
+    }
+
+    public void deleteToggle(Long id) {
+        toggleRepository.deleteById(id);
+    }
+
+    public boolean isToggleEnabledForUser(Long toggleId, String userGroup, String environment) {
+        Toggle toggle = toggleRepository.findById(toggleId).orElseThrow();
+        for (Strategy strategy : toggle.getStrategies()) {
+            if ("UserGroupStrategy".equals(strategy.getName())) {
+                // Exemple de traitement pour la stratégie UserGroup
+                try {
+                    ObjectMapper mapper = new ObjectMapper();
+                    Map<String, Object> params = mapper.readValue(strategy.getParameters(), Map.class);
+                    List<String> allowedGroups = (List<String>) params.get("allowedGroups");
+                    if (!allowedGroups.contains(userGroup)) {
+                        return false;
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+
+            if ("EnvironmentStrategy".equals(strategy.getName())) {
+                // Exemple de traitement pour la stratégie d'environnement
+                try {
+                    ObjectMapper mapper = new ObjectMapper();
+                    Map<String, Object> params = mapper.readValue(strategy.getParameters(), Map.class);
+                    List<String> allowedEnvironments = (List<String>) params.get("allowedEnvironments");
+                    if (!allowedEnvironments.contains(environment)) {
+                        return false;
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        return toggle.isEnabled();
+    }
+}
+```
+
+#### 2.3. Frontend - Ajouter des stratégies lors de la création des toggles
+
+Ajoute des champs dans le formulaire de création de toggle pour configurer les stratégies.
+
+##### `toggle-create.component.html`
+```html
+<div>
+  <h1>Create New Toggle</h1>
+  <form (submit)="createToggle()">
+    <div>
+      <label for="name">Toggle Name:</label>
+      <input id="name" [(ngModel)]="toggle.name" name="name" required />
+    </div>
+    <div>
+      <label for="enabled">Enabled:</label>
+      <input type="checkbox" id="enabled" [(ngModel)]="toggle.enabled" name="enabled" />
+    </div>
+
+    <h2>Strategies</h2>
+    <div>
+      <label for="userGroupStrategy">User Group Strategy (comma-separated):</label>
+      <input id="userGroupStrategy" [(ngModel)]="userGroupStrategy" name="userGroupStrategy" />
+    </div>
+    <div>
+      <label for="environmentStrategy">Environment Strategy (comma-separated):</label>
+      <input id="environmentStrategy" [(ngModel)]="environmentStrategy" name="environmentStrategy" />
+    </div>
+
+    <button type="submit">Create Toggle</button>
+  </form>
+</div>
+```
+
+##### `toggle-create.component.ts`
+Modifie le code pour capturer et envoyer les stratégies au backend :
+
+```typescript
+createToggle(): void {
+  const strategies = [];
+
+  if (this.userGroupStrategy) {
+    strategies.push({
+      name: 'UserGroupStrategy',
+      parameters: JSON.stringify({ allowedGroups: this
